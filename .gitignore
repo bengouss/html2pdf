@@ -1,0 +1,6 @@
+node_modules/
+Chromium.app/
+dist/
+test.html
+*.pdf
+.DS_Store
