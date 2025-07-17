@@ -4,3 +4,4 @@ dist/
 test.html
 *.pdf
 .DS_Store
+tmp/

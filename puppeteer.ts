@@ -47,11 +47,12 @@ const waitTillHTMLRendered = async (
     }
 
     lastHTMLSize = currentHTMLSize
-    await page.waitForTimeout(checkDurationMsecs)
+    await new Promise(r => setTimeout(r, checkDurationMsecs))
   }
+  await new Promise(r => setTimeout(r, checkDurationMsecs))
 }
 
-const waitForExpressionInDOM = async (
+const waitForJSExpression = async (
   page:Page,
   expression:string,
   timeout = 30000,
@@ -61,19 +62,18 @@ const waitForExpressionInDOM = async (
   let checkCounts = 1
 
   while (checkCounts++ <= maxChecks) {
-    const html = await page.content()
-    if(html.includes(expression)) {
-      console.log(`Page rendered fully with timeout ${timeout}`)
+    const res = await page.evaluate(expression)
+    if (res) {
+      console.log(`Expression "${expression}" is defined`)
       break
     }
-
-    console.log(`Waiting for expression "${expression}" to be present in the page content...`)
-    await page.waitForTimeout(checkDurationMsecs)
+    console.log(`Waiting for expression "${expression}" to be defined...`)
+    await new Promise(r => setTimeout(r, checkDurationMsecs))
   }
+  await new Promise(r => setTimeout(r, checkDurationMsecs))
 }
 
 const getBrowser = async (chromiumBin?:string, deflate = true, chromiumBinPath = `${__dirname}/node_modules/@sparticuz/chromium/bin`) => {
-if (!browser) {
     const executablePath = deflate && !chromiumBin ? await chromium.executablePath(chromiumBinPath) : chromiumBin
     const params = {
       // headless: "new",
@@ -91,28 +91,31 @@ if (!browser) {
       throw {code: 500}
     })
     console.log("+++++++++++ Puppeteer browser started")
-  }
   return browser
 }
 
-const renderHTML = async (
-  url:string,
-  interceptRequestURL?:string,
-  waitForExpression?:string,
-  timeoutMs = 30000,
-  cache = false,
-  cacheQuery = false,
-  closePage = true,
-  chromiumBin?:string,
-  chromiumBinDeflate = true
-):Promise<{
+type RenderHTMLResponse = {
   code: number,
   headers: Record<string, string>,
   body?: string,
   exp: number,
   page: Page
-}> => {
-  const nurl = cacheQuery ? url : url.split("?")[0]
+}
+
+const renderHTML = async (
+  url:string,
+  uuid = `${crypto.randomUUID()}`,
+  interceptRequestURL?:string,
+  waitForExpression?:string,
+  timeoutMs = 30000,
+  cache = false,
+  query = true,
+  closePage = true,
+  chromiumBin?:string,
+  chromiumBinDeflate = true,
+  cookies:Record<string, string> = {}
+):Promise<RenderHTMLResponse> => {
+  const nurl = query ? url : url.split("?")[0]
 
   let md5:string | undefined = undefined
   if(cache) {
@@ -128,6 +131,18 @@ const renderHTML = async (
 
   browser = await getBrowser(chromiumBin, chromiumBinDeflate)
   const page = await browser.newPage()
+  Object.entries(cookies).forEach(([name, value]) => {
+    const c:Parameters<typeof page.setCookie>[0] = {
+      name,
+      value,
+      domain: new URL(url).hostname,
+      httpOnly: true,
+      secure: true,
+      sameSite: "Strict",
+    }
+    console.log("+++++++++++ Setting cookie", JSON.stringify(c))
+    page.setCookie(c)
+  })
   console.log("+++++++++++ New Puppeteer page created", nurl)
   try {
     page.setUserAgent(USER_AGENT)
@@ -146,23 +161,32 @@ const renderHTML = async (
       })
     }
 
+    page.on("dialog", dialog => {
+      console.log("+++++++++++ Dialog detected:", dialog.message())
+      dialog.accept()
+    })
+
     // Navigate the page to a URL
     const response = await page.goto(nurl, { waitUntil: "load" })
     if(!response) throw new Error("No response from page.goto")
+    let r:RenderHTMLResponse
     if (!interceptRequestURL) {
       const code = response.status()
       if(waitForExpression) {
-        await waitForExpressionInDOM(page, waitForExpression, timeoutMs)
+        await waitForJSExpression(page, waitForExpression, timeoutMs)
       } else {
         await waitTillHTMLRendered(page, timeoutMs)
       }
-
+      console.log("+++++++++++ Page rendered fully with status code", code)
       const headers = response.headers()
+      // console.log("+++++++++++ Page headers", JSON.stringify(headers))
+      
       const body = await page.evaluate(
-        () => document.querySelector("*")?.outerHTML
+        () => document.querySelector("html")?.innerHTML
       )
+      console.log("+++++++++++ Page content retrieved, size:", body?.length || 0)
       if(closePage) await page.close()
-      const r = {
+      r = {
         code,
         headers,
         body,
@@ -170,7 +194,6 @@ const renderHTML = async (
         page
       }
       if(cache && md5) await fs.promises.writeFile(`/tmp/${md5}.json`, JSON.stringify(r))
-      return r
     } else {
       if(!request) throw new Error("No request intercepted")
       const response = (request as HTTPRequest).response()
@@ -178,15 +201,16 @@ const renderHTML = async (
       const headers = response?.headers() || {}
       const body = (await response?.json()) || "Bad Request"
       if(closePage) await page.close()
-      const r = {
+      r = {
         code,
         headers,
         body,
         exp: Date.now() + CACHE_HOURS * 3600 * 1000,
         page
       }
-      return r
     }
+    if(r.body) await fs.promises.writeFile(`/tmp/${uuid}.html`, r.body)
+    return r
   } catch (err) {
     console.log(err)
     await page.close()
@@ -201,12 +225,14 @@ const renderPDF = async (
   waitForExpression?:string,
   timeoutMs = 30000,
   cache = false,
-  query = false,
+  query = true,
   chromiumBin?:string,
-  chromiumBinDeflate = true
+  chromiumBinDeflate = true,
+  cookies:Record<string, string> = {}
 ) => {
   const rr = await renderHTML(
     url,
+    uuid,
     interceptRequestURL,
     waitForExpression,
     timeoutMs,
@@ -214,13 +240,33 @@ const renderPDF = async (
     query,
     false,
     chromiumBin,
-    chromiumBinDeflate
+    chromiumBinDeflate,
+    cookies
   )
+  console.log("+++++++++++ HTML rendered for", url, "with UUID", uuid)
+  await rr.page.emulateMediaType('screen');
   await rr.page.pdf({
     path: `/tmp/${uuid}.pdf`,
+    landscape: true,
+    timeout: 120000,
+    printBackground: true,
+    margin: {
+      top: '10mm',
+      bottom: '20mm',
+      left: '10mm',
+      right: '10mm',
+      // paper size must be set explicitly otherwise we end up with white borders on the top/bottom of the page
+      // paperHeight: '210mm',
+      // paperWidth: '297mm',
+    },
+    format: 'A4',
   });
+  await new Promise(r => setTimeout(r, 1000)) // wait for the file to be written
+  console.log("+++++++++++ PDF generated for", url, "with UUID", uuid)
   await rr.page.close()
+  await browser?.close()
   return fs.promises.readFile(`/tmp/${uuid}.pdf`)
+  // return buffer
 }
 
 export default {

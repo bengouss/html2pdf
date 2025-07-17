@@ -12,6 +12,7 @@ app.get('/', (req, res) => {
     console.log(new Date().toISOString(), req.query.url)
     fn.renderPDF(
       req.query.url as string,
+      crypto.randomUUID(),
       undefined,
       undefined,
       parseInt(req.query.timeout as string) || 40000,

@@ -1,5 +1,6 @@
 import { APIGatewayEvent, APIGatewayProxyResult, Context } from "aws-lambda"
-import scraper from "./puppeteer"
+import puppeteer from "./puppeteer"
+import compressPDF from "./pdf"
 
 const validToken = process.env.AUTH_TOKEN || "abcdef123"
 const unauthorized = () => ({
@@ -16,23 +17,58 @@ const handleApi = async (e: APIGatewayEvent, context: Context): Promise<APIGatew
     let body = "Bad Request"
     let headers = {}
     let isBase64Encoded = false
+
     if(e.queryStringParameters && e.queryStringParameters.url){
         const timeout = (e.queryStringParameters.timeout ? parseInt(e.queryStringParameters.timeout) : 40000) || 40000
+        const compress = !(e.queryStringParameters.compress === "false")
+        const jpegQuality = e.queryStringParameters.jpegQuality ? parseInt(e.queryStringParameters.jpegQuality) : undefined
         const cache = e.queryStringParameters.cache === "true"
-        const query = e.queryStringParameters.query === "true"
+        const query = !e.queryStringParameters.query || e.queryStringParameters.query === "true"
         const uuid = context && context.awsRequestId ? `${context.awsRequestId}` : `${crypto.randomUUID()}`
         const filename = e.queryStringParameters.filename || "output.pdf"
         const waitForExpression = e.queryStringParameters.waitForExpression || undefined
+        const cookies:Record<string, string> = {}
+
+        console.log((e.requestContext as any)?.http?.method, e.body)
+
+        if((e.requestContext as any)?.http?.method === "POST" && !!e.body) {
+            try {
+                const body = JSON.parse(e.body)
+                if(body.cookies) {
+                    Object.entries(body.cookies).map(([key, value]) => {
+                        cookies[key] = `${value}`
+                    })
+                }
+            } catch (err) {
+                console.log("Error parsing body:", err)
+                return {
+                    statusCode: 400,
+                    body: JSON.stringify({ error: "Invalid JSON body" }),
+                    isBase64Encoded: false,
+                    headers: {
+                        "Content-Type": "application/json"
+                    }
+                };
+            }
+        }
         console.log(e.queryStringParameters.url, timeout, cache, query)
-        await scraper.renderPDF(
+        await puppeteer.renderPDF(
             e.queryStringParameters.url,
             uuid,
             e.queryStringParameters.intercept,
             waitForExpression,
             timeout,
             cache,
-            query
+            query,
+            undefined,
+            undefined,
+            cookies
         )
+        .then(uncompressedData => {
+            if(!compress) return uncompressedData
+            console.log("Compressing PDF...")
+            return compressPDF(uncompressedData, uuid, jpegQuality)
+        })
         .then(data => {
             body = data.toString("base64")
             headers = {
