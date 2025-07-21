@@ -68,7 +68,7 @@ const handleApi = async (e: APIGatewayEvent, context: Context): Promise<APIGatew
         console.log("PDF rendered successfully for UUID:", uuid, "compress:", compress, "jpegQuality:", jpegQuality, `size:${(uncompressedData.length/1024).toFixed(2)}KB`)
         if(!compress) return uncompressedData
         console.log("Compressing PDF...")
-        return compressPDF(uncompressedData, uuid, jpegQuality)
+        return compressPDF(uncompressedData, uuid, jpegQuality, reqBody.producer, reqBody.creator)
     })
     .then(data => {
         body = data.toString("base64")

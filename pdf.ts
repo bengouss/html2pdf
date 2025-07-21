@@ -248,7 +248,7 @@ type ImageInDoc = {
   hash: string
 }
 
-const compress = async (pdf: Uint8Array | Buffer, uuid:string, jpegQuality?:number) => {
+const compress = async (pdf: Uint8Array | Buffer, uuid:string, jpegQuality?:number, producer?:string, creator?:string) => {
   console.log(`Starting PDF compression jpegQuality:${jpegQuality || defaultJpegQuality}`);
   const doc = await pdflib.PDFDocument.load(pdf)
   console.log("PDF document loaded successfully");
@@ -294,7 +294,11 @@ const compress = async (pdf: Uint8Array | Buffer, uuid:string, jpegQuality?:numb
   // TODO: Remove duplicate images and use a single reference to the image data (see imagesInDoc map)
   // TODO: Optimize/reduce size of transparency masks (SMask)
 
-  console.log("Found images in PDF:", imagesInDocByObjectNumber.size);
+  // console.log("Found images in PDF:", imagesInDocByObjectNumber.size);
+
+  if(producer) doc.setProducer(producer)
+  if(creator) doc.setCreator(creator)
+
   const pdfBytes = await doc.save();
   const f1size = pdf.byteLength / 1024
   const f2size = pdfBytes.byteLength / 1024;
