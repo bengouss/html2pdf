@@ -99,7 +99,84 @@ const handleObject = (doc:PDFDocument, pdfObject: PDFObject, depth = 0) => {
   }
 }
 
-const handleImage = async (doc:PDFDocument, pdfRef:PDFRef, pdfObject: PDFRawStream, objectIdx:number, jpegQuality = defaultJpegQuality) => {
+export const resize = async (sh:sharp.Sharp, maxWidthHeight: number) => {
+  const meta = await sh.metadata();
+  
+  const aspectRatio = meta.width / meta.height;
+  let nWidth = meta.width, nHeight = meta.height;
+  if(aspectRatio > 1) {
+    // Landscape orientation
+    nWidth = maxWidthHeight;
+    nHeight = Math.round(maxWidthHeight / aspectRatio);
+  } else {
+    // Portrait orientation
+    nHeight = maxWidthHeight;
+    nWidth = Math.round(maxWidthHeight * aspectRatio);
+  }
+
+  sh = sh.resize({
+    width: nWidth,
+    height: nHeight,
+    // fit: 'inside'
+  });
+
+  console.log(`  Resizing image from ${meta.width}x${meta.height} to ${nWidth}x${nHeight}`);
+  return {
+    sharp: sh,
+    metadata: {
+      width: nWidth,
+      height: nHeight,
+    }
+  }
+}
+
+export const ppmToJpeg = async (imageData: Uint8Array, width: number, height: number, jpegQuality: number, maxWidthHeight: number) => {
+  const sh:sharp.Sharp = sharp(imageData, {
+    raw: {
+      width,
+      height,
+      channels: 3,
+    }
+  }).jpeg({
+    quality: jpegQuality
+  })
+
+  if(width > maxWidthHeight || height > maxWidthHeight) {
+    const rr = await resize(sh, maxWidthHeight)
+    return {
+      buffer: await rr.sharp.toBuffer(),
+      metadata: rr.metadata,
+    }
+  }
+
+  return {
+    buffer: await sh.toBuffer(),
+    metadata: {
+      width,
+      height,
+    },
+  }
+}
+
+const updateImageObject = (pdfObject: PDFRawStream, compressedData: Buffer, width?:number, height?:number) => {
+  const saved = pdfObject.contents.byteLength-compressedData.byteLength
+  if(saved <= 0) {
+    console.log(`  No compression applied, original size: ${pdfObject.contents.byteLength} bytes`);
+    return;
+  }
+
+  //@ts-ignore
+  pdfObject.contents = compressedData; // Replace the contents with compressed JPEG data
+  if(width) pdfObject.dict.set(pdflib.PDFName.of('Width'), pdflib.PDFNumber.of(width));
+  if(height) pdfObject.dict.set(pdflib.PDFName.of('Height'), pdflib.PDFNumber.of(height));
+  pdfObject.dict.set(pdflib.PDFName.of('Filter'), pdflib.PDFName.of('DCTDecode')); // Set filter to DCTDecode for JPEG
+  // pdfObject.dict.set(pdflib.PDFName.of('ColorSpace'), pdflib.PDFName.of('DeviceRGB')); // Set color space to DeviceRGB
+  pdfObject.dict.set(pdflib.PDFName.of('Length'), pdflib.PDFNumber.of(pdfObject.contents.byteLength)); // Set length to the new compressed size
+
+  console.log(`  Compressed image => ${(saved/1024).toFixed(2)}Kb saved`);
+}
+
+const handleImage = async (doc:PDFDocument, pdfRef:PDFRef, pdfObject: PDFRawStream, objectIdx:number, uuid:string, jpegQuality = defaultJpegQuality, maxWidthHeight = 800) => {
   const filter = pdfObject.dict.get(pdflib.PDFName.of('Filter')) as PDFName | undefined;
   const width = pdfObject.dict.get(pdflib.PDFName.of('Width')) as PDFNumber
   const height = pdfObject.dict.get(pdflib.PDFName.of('Height')) as PDFNumber
@@ -107,45 +184,17 @@ const handleImage = async (doc:PDFDocument, pdfRef:PDFRef, pdfObject: PDFRawStre
   const colorSpace = pdfObject.dict.get(pdflib.PDFName.of('ColorSpace')) as PDFName | PDFRef | undefined
   const bitsPerComponent = pdfObject.dict.get(pdflib.PDFName.of('BitsPerComponent')) as PDFNumber | undefined
   const sMask = pdfObject.dict.get(pdflib.PDFName.of('SMask')) as PDFRef | undefined
-  const isJPG = filter && filter.toString() === "/DCTDecode";
   const isCompressedPPGM = filter && filter.toString() === "/FlateDecode";
   const originalData = Buffer.from(isCompressedPPGM ? zlib.inflateSync(pdfObject.contents) : pdfObject.contents);
   const colorSpaceName = findColorSpace(doc, colorSpace);
 
   const isPPM = isCompressedPPGM && colorSpaceName === "/DeviceRGB";
   const isPGM = isCompressedPPGM && colorSpaceName === "/DeviceGray";
+  const isJPG = filter && filter.toString() === "/DCTDecode";
 
-  let imageData = new Uint8Array(originalData);
-  if(isJPG) {
-    // this is already compressed, do nothing
-  } else if(isPPM) {
-    // create PPM header and buffer
-    const ppmHeader = `P6\n${width.asNumber()} ${height.asNumber()}\n255\n`;
-    const ppmBuffer = Buffer.concat([Buffer.from(ppmHeader, 'utf8'), imageData]);
-    // console.log(`Image is PPM, size: ${data.byteLength} bytes`);
-    imageData = new Uint8Array(ppmBuffer);
+  if(isPGM) return
 
-    const compressed = await sharp(imageData, {
-      raw: {
-        width: width.asNumber(),
-        height: height.asNumber(),
-        channels: 3
-      }
-    })
-    .jpeg({ quality: jpegQuality })
-    .toBuffer()
-
-    console.log(`Compressed PPM to JPEG, saving ${(imageData.byteLength-compressed.byteLength)/1024} KB`);
-
-    //@ts-ignore
-    pdfObject.contents = compressed; // Replace the contents with compressed JPEG data
-    pdfObject.dict.set(pdflib.PDFName.of('Filter'), pdflib.PDFName.of('DCTDecode')); // Set filter to DCTDecode for JPEG
-    pdfObject.dict.set(pdflib.PDFName.of('Length'), pdflib.PDFNumber.of(pdfObject.contents.byteLength)); // Set length to the new compressed size
-  } else if(isPGM) {
-    // this is likely a transparency bitmap (SMask), do nothing for now
-  }
-
-  console.log(`Found image object at index ${objectIdx}:`,
+  console.log(` Found ${isJPG ? "JPEG" : (isPPM ? "PPM" : "image")} object at index ${objectIdx}:`,
     `${width}x${height}@${bitsPerComponent}`,
     `Tag:${pdfRef.tag}`,
     `Filter:${filter}`,
@@ -153,6 +202,24 @@ const handleImage = async (doc:PDFDocument, pdfRef:PDFRef, pdfObject: PDFRawStre
     `sMask:${sMask?.toString() || "-"}`,
     `length:${pdfObject.contents.byteLength}`
   );
+
+  if(isJPG) {
+    // this is already compressed, only resize if necessary
+    if(width.asNumber() > maxWidthHeight || height.asNumber() > maxWidthHeight) {
+      const sh = sharp(originalData, {})
+      const resized = await resize(sh.jpeg({
+        quality: jpegQuality
+      }), maxWidthHeight);
+      const compressed = await resized.sharp.toBuffer();
+      updateImageObject(pdfObject, compressed, resized.metadata.width, resized.metadata.height);
+    }
+  } else if(isPPM) {
+    const compressed = await ppmToJpeg(originalData, width.asNumber(), height.asNumber(), jpegQuality, maxWidthHeight);
+    // console.log(`Compressed ${pdfRef.objectNumber} PPM to JPEG, ${((originalData.byteLength-compressed.buffer.byteLength)/1024).toFixed(2)}Kb saved`);
+    updateImageObject(pdfObject, compressed.buffer, compressed.metadata.width, compressed.metadata.height);
+  } else if(isPGM) {
+    // this is likely a transparency bitmap (SMask), do nothing for now
+  }
 
   const imgInDoc:ImageInDoc = {
     pdfRef,
@@ -209,8 +276,8 @@ const compress = async (pdf: Uint8Array | Buffer, uuid:string, jpegQuality?:numb
     const type = dict.get(pdflib.PDFName.of('Type'))
     const subtype = dict.get(pdflib.PDFName.of('Subtype'));
     if (!!subtype && subtype === pdflib.PDFName.of('Image') && !!type && type === pdflib.PDFName.of('XObject')) {
-      const img = await handleImage(doc, pdfRef, pdfObject as PDFRawStream, objectIdx, jpegQuality);
-
+      const img = await handleImage(doc, pdfRef, pdfObject as PDFRawStream, objectIdx, uuid, jpegQuality);
+      if(!img) continue;
       // Store images into two hashmaps: one containing all the images ordered by object number, one by image md5 to find duplicates
       if(imagesInDoc.has(img.hash)) {
         imagesInDoc.get(img.hash)!.push(img);
