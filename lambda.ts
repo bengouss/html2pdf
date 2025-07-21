@@ -18,79 +18,79 @@ const handleApi = async (e: APIGatewayEvent, context: Context): Promise<APIGatew
     let headers = {}
     let isBase64Encoded = false
 
-    if(e.queryStringParameters && e.queryStringParameters.url){
-        const timeout = (e.queryStringParameters.timeout ? parseInt(e.queryStringParameters.timeout) : 40000) || 40000
-        const compress = !(e.queryStringParameters.compress === "false")
-        const jpegQuality = e.queryStringParameters.jpegQuality ? parseInt(e.queryStringParameters.jpegQuality) : undefined
-        const cache = e.queryStringParameters.cache === "true"
-        const query = !e.queryStringParameters.query || e.queryStringParameters.query === "true"
-        const uuid = context && context.awsRequestId ? `${context.awsRequestId}` : `${crypto.randomUUID()}`
-        const filename = e.queryStringParameters.filename || "output.pdf"
-        const waitForExpression = e.queryStringParameters.waitForExpression || undefined
-        const cookies:Record<string, string> = {}
+    const timeoutMs = (e.queryStringParameters?.timeout ? parseInt(e.queryStringParameters?.timeout) : 40000) || 40000
+    const compress = !(e.queryStringParameters?.compress === "false")
+    const jpegQuality = e.queryStringParameters?.jpegQuality ? parseInt(e.queryStringParameters?.jpegQuality) : undefined
+    const cache = e.queryStringParameters?.cache === "true"
+    const query = !e.queryStringParameters?.query || e.queryStringParameters?.query === "true"
+    const uuid = context && context.awsRequestId ? `${context.awsRequestId}` : `${crypto.randomUUID()}`
+    const filename = e.queryStringParameters?.filename || "output.pdf"
+    const interceptRequestURL = e.queryStringParameters?.intercept
 
-        console.log((e.requestContext as any)?.http?.method, e.body)
+    const cookies:Record<string, string> = {}
+    let reqBody:Record<string, any> = {}
 
-        if((e.requestContext as any)?.http?.method === "POST" && !!e.body) {
-            try {
-                const body = JSON.parse(e.body)
-                if(body.cookies) {
-                    Object.entries(body.cookies).map(([key, value]) => {
-                        cookies[key] = `${value}`
-                    })
+    console.log((e.requestContext as any)?.http?.method, e.body)
+
+    if((e.requestContext as any)?.http?.method === "POST" && !!e.body) {
+        try {
+            reqBody = e.isBase64Encoded ? JSON.parse(Buffer.from(e.body, 'base64').toString('utf-8')) : JSON.parse(e.body)
+            if(reqBody.cookies) {
+                Object.entries(reqBody.cookies).map(([key, value]) => {
+                    cookies[key] = `${value}`
+                })
+            }
+        } catch (err) {
+            console.log("Error parsing body:", err)
+            return {
+                statusCode: 400,
+                body: JSON.stringify({ error: "Invalid JSON body" }),
+                isBase64Encoded: false,
+                headers: {
+                    "Content-Type": "application/json"
                 }
-            } catch (err) {
-                console.log("Error parsing body:", err)
-                return {
-                    statusCode: 400,
-                    body: JSON.stringify({ error: "Invalid JSON body" }),
-                    isBase64Encoded: false,
-                    headers: {
-                        "Content-Type": "application/json"
-                    }
-                };
-            }
+            };
         }
-        console.log(e.queryStringParameters.url, timeout, cache, query)
-        await puppeteer.renderPDF(
-            e.queryStringParameters.url,
-            uuid,
-            e.queryStringParameters.intercept,
-            waitForExpression,
-            timeout,
-            cache,
-            query,
-            undefined,
-            undefined,
-            cookies
-        )
-        .then(uncompressedData => {
-            if(!compress) return uncompressedData
-            console.log("Compressing PDF...")
-            return compressPDF(uncompressedData, uuid, jpegQuality)
-        })
-        .then(data => {
-            body = data.toString("base64")
-            headers = {
-                "Content-Type": "application/pdf",
-                "Content-Disposition": `attachment; filename="${filename}"`,
-                "Cache-Control": "max-age=604800",
-                "Content-Length": body.length.toString()
-            }
-            isBase64Encoded = true
-            code = 200
-        })
-        .catch(err => {
-            console.log(err.code || err)
-            code = err.code || 500
-            if(code < 200 || code > 599) code = 500
-            try {
-                body = JSON.stringify(err.message)
-            } catch(e) {
-                body = err.message
-            }
-        })
     }
+    const input = {
+        uuid,
+        interceptRequestURL,
+        timeoutMs,
+        cache,
+        query,
+        cookies,
+        url: reqBody.url,
+        ...reqBody
+    }
+    console.log(JSON.stringify(input))
+    await puppeteer.renderPDF(input)
+    .then(uncompressedData => {
+        console.log("PDF rendered successfully for UUID:", uuid, "compress:", compress, "jpegQuality:", jpegQuality, `size:${(uncompressedData.length/1024).toFixed(2)}KB`)
+        if(!compress) return uncompressedData
+        console.log("Compressing PDF...")
+        return compressPDF(uncompressedData, uuid, jpegQuality)
+    })
+    .then(data => {
+        body = data.toString("base64")
+        headers = {
+            "Content-Type": "application/pdf",
+            "Content-Disposition": `attachment; filename="${filename}"`,
+            "Cache-Control": "max-age=604800",
+            "Content-Length": body.length.toString()
+        }
+        isBase64Encoded = true
+        code = 200
+    })
+    .catch(err => {
+        console.log(err.code || err)
+        code = err.code || 500
+        if(code < 200 || code > 599) code = 500
+        try {
+            body = JSON.stringify(err.message)
+        } catch(e) {
+            body = err.message
+        }
+    })
 
     return {
         statusCode: code,

@@ -10,17 +10,15 @@ console.log("Using Chromium binary:", chromiumBin)
 app.get('/', (req, res) => {
   if(req.query.url){
     console.log(new Date().toISOString(), req.query.url)
-    fn.renderPDF(
-      req.query.url as string,
-      crypto.randomUUID(),
-      undefined,
-      undefined,
-      parseInt(req.query.timeout as string) || 40000,
-      req.query.cache !== "false",
-      req.query.query === "true",
+    fn.renderPDF({
+      url: req.query.url as string,
+      uuid: crypto.randomUUID(),
+      timeoutMs: parseInt(req.query.timeout as string) || 40000,
+      cache: req.query.cache !== "false",
+      query: req.query.query === "true",
       chromiumBin,
-      false
-    )
+      chromiumBinDeflate: false
+  })
     .then(data => {
       res.set({
         "Content-Type": "application/pdf",

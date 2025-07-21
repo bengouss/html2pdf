@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "build": "rm -rf dist && esbuild lambda.ts --bundle --minify --sourcemap --platform=node --target=es2020 --outfile=dist/index.js",
-    "docker-build": "npm run build && docker build --platform=linux/amd64 -t bgrynblat/html2pdf:latest .",
+    "docker-build": "npm run build && docker build --platform=linux/amd64 --provenance false -t bgrynblat/html2pdf:latest .",
     "docker-dev": "npm run docker-build && docker run --platform=linux/amd64 --rm -p 9000:8080 -v \"$(pwd)/tmp:/tmp\" bgrynblat/html2pdf:latest",
     "docker-push": "npm run docker-build && docker push bgrynblat/html2pdf:latest",
     "test": "echo \"Error: no test specified\" && exit 1"

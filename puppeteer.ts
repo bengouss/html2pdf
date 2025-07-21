@@ -7,6 +7,41 @@ const CACHE_HOURS = parseInt(process.env.CACHE_HOURS || "2")
 const TIMEOUT_SEC = parseInt(process.env.TIMEOUT_SEC || "120")
 const USER_AGENT = process.env.USER_AGENT || 'html2pdf/lambda'
 
+const defaultFooterTemplate = `<html>
+  <head>
+    <style>
+      .footer-container {
+        padding: 0.25cm 1cm;
+        position: relative;
+        width: 100%;
+      }
+      .page-numbers {
+        font-size: 0.25cm;
+        float: right;
+        position: relative;
+        text-align: right;
+        top: 0.25cm;
+        white-space: nowrap;
+      }
+      .footer-logo-container {
+        float: left;
+      }
+      .footer-logo-container img {
+        display: block;
+        max-height: 0.7cm;
+        max-width: 2.3cm;
+      }
+    </style>
+  </head>
+  <body class="body--footer" style="font-size:14px !important;">
+    <div class="footer-container">
+      <div class="page-numbers">
+        <span class="pageNumber"></span> / <span class="totalPages"></span>
+      </div>
+    </div>
+  </body>
+</html>`
+
 let browser:Browser | null = null
 
 const waitTillHTMLRendered = async (
@@ -218,18 +253,47 @@ const renderHTML = async (
   }
 }
 
-const renderPDF = async (
-  url:string,
+const renderPDF = async ({
+  url,
   uuid = `${crypto.randomUUID()}`,
-  interceptRequestURL?:string,
-  waitForExpression?:string,
+  interceptRequestURL,
+  waitForExpression,
   timeoutMs = 30000,
   cache = false,
   query = true,
-  chromiumBin?:string,
+  chromiumBin,
   chromiumBinDeflate = true,
-  cookies:Record<string, string> = {}
-) => {
+  cookies = {},
+  emulatedMediaType = 'screen',
+  marginTop = '10mm',
+  marginBottom = '20mm',
+  marginLeft = '10mm',
+  marginRight = '10mm',
+  paperHeight = '210mm',
+  paperWidth = '297mm',
+  headerTemplate = "<div></div>",
+  footerTemplate = defaultFooterTemplate
+}:{
+  url:string,
+  uuid?:string,
+  interceptRequestURL?:string,
+  waitForExpression?:string,
+  timeoutMs?:number,
+  cache?:boolean,
+  query?:boolean,
+  chromiumBin?:string,
+  chromiumBinDeflate?:boolean,
+  cookies?:Record<string, string>,
+  emulatedMediaType?:string,
+  marginTop?:string,
+  marginBottom?:string,
+  marginLeft?:string,
+  marginRight?:string,
+  paperHeight?:string,
+  paperWidth?:string,
+  headerTemplate?:string
+  footerTemplate?:string
+}) => {
   const rr = await renderHTML(
     url,
     uuid,
@@ -244,29 +308,33 @@ const renderPDF = async (
     cookies
   )
   console.log("+++++++++++ HTML rendered for", url, "with UUID", uuid)
-  await rr.page.emulateMediaType('screen');
+  if(emulatedMediaType) await rr.page.emulateMediaType(emulatedMediaType);
   await rr.page.pdf({
     path: `/tmp/${uuid}.pdf`,
-    landscape: true,
+    // landscape: true,
+    // paper size must be set explicitly otherwise we end up with white borders on the top/bottom of the page
+    height: paperHeight,
+    width: paperWidth,
     timeout: 120000,
     printBackground: true,
     margin: {
-      top: '10mm',
-      bottom: '20mm',
-      left: '10mm',
-      right: '10mm',
-      // paper size must be set explicitly otherwise we end up with white borders on the top/bottom of the page
-      // paperHeight: '210mm',
-      // paperWidth: '297mm',
+      top: marginTop,
+      bottom: marginBottom,
+      left: marginLeft,
+      right: marginRight,
     },
-    format: 'A4',
+    displayHeaderFooter: true,
+    headerTemplate,
+    footerTemplate,
+    // format: 'A4',
   });
   await new Promise(r => setTimeout(r, 1000)) // wait for the file to be written
   console.log("+++++++++++ PDF generated for", url, "with UUID", uuid)
-  await rr.page.close()
-  await browser?.close()
+  rr.page.close().then(() => browser?.close()).then(() => {
+    console.log("+++++++++++ Puppeteer page and browser closed")
+  })
+  console.log(`+++++++++++ Writing file to /tmp/${uuid}.pdf`)
   return fs.promises.readFile(`/tmp/${uuid}.pdf`)
-  // return buffer
 }
 
 export default {
