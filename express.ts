@@ -17,8 +17,7 @@ app.get('/', (req, res) => {
       cache: req.query.cache !== "false",
       query: req.query.query === "true",
       chromiumBin,
-      chromiumBinDeflate: false
-  })
+    })
     .then(data => {
       res.set({
         "Content-Type": "application/pdf",

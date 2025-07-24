@@ -5,8 +5,8 @@
   "main": "index.js",
   "scripts": {
     "build": "rm -rf dist && esbuild lambda.ts --bundle --minify --sourcemap --platform=node --target=es2020 --outfile=dist/index.js",
-    "docker-build": "npm run build && docker build --platform=linux/amd64 --provenance false -t bgrynblat/html2pdf:latest .",
-    "docker-dev": "npm run docker-build && docker run --platform=linux/amd64 --rm -p 9000:8080 -v \"$(pwd)/tmp:/tmp\" bgrynblat/html2pdf:latest",
+    "docker-build": "npm run build && docker build --provenance false -t bgrynblat/html2pdf:latest .",
+    "docker-dev": "npm run docker-build && docker run --rm -p 9000:8080 -v \"$(pwd)/tmp:/tmp\" bgrynblat/html2pdf:latest",
     "docker-push": "npm run docker-build && docker push bgrynblat/html2pdf:latest",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -14,15 +14,18 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@sparticuz/chromium": "^110.0.0",
-    "express": "^4.18.2",
     "pdf-lib": "^1.17.1",
-    "puppeteer-core": "^19.6.3",
+    "puppeteer-core": "^24.15.0",
     "sharp": "^0.34.3"
   },
   "devDependencies": {
+    "@aws-crypto/sha256-js": "^5.2.0",
+    "@aws-sdk/signature-v4": "^3.370.0",
     "@types/aws-lambda": "^8.10.150",
     "@types/express": "^5.0.3",
-    "esbuild": "^0.25.5"
+    "@types/node": "^24.1.0",
+    "axios": "^1.11.0",
+    "esbuild": "^0.25.5",
+    "express": "^4.18.2"
   }
 }

@@ -1,7 +1,7 @@
-import chromium from "@sparticuz/chromium"
 import puppeteer, { Browser, HTTPRequest, Page } from "puppeteer-core"
 import fs from "fs"
 import crypto from "crypto"
+import {globSync} from "node:fs"
 
 const CACHE_HOURS = parseInt(process.env.CACHE_HOURS || "2")
 const TIMEOUT_SEC = parseInt(process.env.TIMEOUT_SEC || "120")
@@ -108,15 +108,59 @@ const waitForJSExpression = async (
   await new Promise(r => setTimeout(r, checkDurationMsecs))
 }
 
-const getBrowser = async (chromiumBin?:string, deflate = true, chromiumBinPath = `${__dirname}/node_modules/@sparticuz/chromium/bin`) => {
-    const executablePath = deflate && !chromiumBin ? await chromium.executablePath(chromiumBinPath) : chromiumBin
+const getBrowser = async (chromiumBin?:string) => {
+    const executablePath = chromiumBin || globSync("/root/.cache/ms-playwright/chromium_headless_shell-*/chrome-linux/headless_shell")[0]
+    const args = () => {
+      const result = [
+        '--allow-running-insecure-content',
+        '--autoplay-policy=user-gesture-required',
+        '--disable-background-timer-throttling',
+        '--disable-component-update',
+        '--disable-domain-reliability',
+        '--disable-features=AudioServiceOutOfProcess,IsolateOrigins,site-per-process',
+        '--disable-ipc-flooding-protection',
+        '--disable-print-preview',
+        '--disable-dev-shm-usage',
+        '--disable-setuid-sandbox',
+        '--disable-site-isolation-trials',
+        '--disable-speech-api',
+        '--disable-web-security',
+        '--disk-cache-size=33554432',
+        '--enable-features=SharedArrayBuffer',
+        '--hide-scrollbars',
+        '--ignore-gpu-blocklist',
+        '--in-process-gpu',
+        '--mute-audio',
+        '--no-default-browser-check',
+        '--no-first-run',
+        '--no-pings',
+        '--no-sandbox',
+        '--no-zygote',
+        '--use-gl=angle',
+        '--use-angle=swiftshader',
+        '--window-size=1920,1080', // https://source.chromium.org/search?q=lang:cpp+symbol:kWindowSize&ss=chromium
+      ];
+      // if (Chromium.headless === true) {
+        result.push('--single-process'); // https://source.chromium.org/search?q=lang:cpp+symbol:kSingleProcess&ss=chromium
+      // }
+      // else {
+      //     result.push('--start-maximized'); // https://source.chromium.org/search?q=lang:cpp+symbol:kStartMaximized&ss=chromium
+      // }
+      return result;
+    }
+    
     const params = {
-      // headless: "new",
-      // args: ['--no-sandbox']
-      args: chromium.args,
-      defaultViewport: chromium.defaultViewport,
+      args: args(),
+      defaultViewport: {
+        deviceScaleFactor: 1,
+        hasTouch: false,
+        height: 1080,
+        isLandscape: true,
+        isMobile: false,
+        width: 1920,
+      },
       executablePath,
-      headless: "new" as const, //chromium.headless,
+      headless: true,
       ignoreHTTPSErrors: true,
       dumpio: true,
     }
@@ -147,7 +191,6 @@ const renderHTML = async (
   query = true,
   closePage = true,
   chromiumBin?:string,
-  chromiumBinDeflate = true,
   cookies:Record<string, string> = {}
 ):Promise<RenderHTMLResponse> => {
   const nurl = query ? url : url.split("?")[0]
@@ -164,7 +207,7 @@ const renderHTML = async (
     }
   }
 
-  browser = await getBrowser(chromiumBin, chromiumBinDeflate)
+  browser = await getBrowser(chromiumBin)
   const page = await browser.newPage()
   Object.entries(cookies).forEach(([name, value]) => {
     const c:Parameters<typeof page.setCookie>[0] = {
@@ -262,7 +305,6 @@ const renderPDF = async ({
   cache = false,
   query = true,
   chromiumBin,
-  chromiumBinDeflate = true,
   cookies = {},
   emulatedMediaType = 'screen',
   marginTop = '10mm',
@@ -304,7 +346,6 @@ const renderPDF = async ({
     query,
     false,
     chromiumBin,
-    chromiumBinDeflate,
     cookies
   )
   console.log("+++++++++++ HTML rendered for", url, "with UUID", uuid)
